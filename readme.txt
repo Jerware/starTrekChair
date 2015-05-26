@@ -1,10 +1,10 @@
-This code adds sound to Adam Savage's Star Trek captain's chair
+This code adds sound & light to Adam Savage's Star Trek captain's chair
 featured in the following Tested video:
 
 https://youtu.be/jaVi06DaTk0
 
-It compiles on Teensy 3.1, requires a Teensy Audio Board, and is designed to 
-work in parallel with the LED lamp code. Both sources are available in this
+It compiles on Teensy 3.1, requires a Teensy Audio Board, and the two
+code bases are designed to work in parallel. Both are available in this
 GITHUB repository:
 
 https://github.com/Jerware/
