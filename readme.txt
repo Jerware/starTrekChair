@@ -9,11 +9,17 @@ GITHUB repository:
 
 https://github.com/Jerware/
 
-Jeremy Williams wrote the code and designed the sound/LED hardware. Please
-note that it is still very much in the prototype phase, and you will find room for 
-improvement. For instance, the two code bases are independent and unaware
-of each other. (Each switch is wired to both boards.) A revision might employ
-i2c and a master/slave relationship between the boards.
+Jeremy Williams wrote the code and designed the sound/LED hardware.
+
+Update April 2017:
+This is the second revision of the code & hardware. The sound board now acts
+as a master and the LED board is a slave. All buttons are routed solely
+to the sound board, and it sends signals to the LED board via hardware
+serial. There is also a pin expander IC incorporated instead of the pins
+on the underside of the Teensy 3.1.
+
+A PCB is now available from OSH Park:
+https://oshpark.com/shared_projects/sdLJDqlW
 
 As always, thanks to the amazing library developers for keeping Arduino coding
 from becoming a chore. You are all giants. I'll monitor the feedback on Github
