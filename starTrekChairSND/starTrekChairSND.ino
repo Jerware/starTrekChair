@@ -1,21 +1,21 @@
-// starTrekChairSND release 20150525
+// starTrekChairSND release 20160319
 //
-// This code adds sound to Adam Savage's Star Trek captain's chair
+// This code controls the LEDs on Adam Savage's Star Trek captain's chair
 // featured in the following Tested video:
 //
 // https://youtu.be/jaVi06DaTk0
 //
-// It compiles on Teensy 3.1, requires a Teensy Audio Board, and is designed to 
-// work in parallel with the LED lamp code. Both sources are available in this
-// GITHUB repository:
+// It compiles on Teensy 3.1 and is designed to work in parallel with the 
+// sound code. Both sources are available in this GITHUB repository:
 //
 // https://github.com/Jerware/
 //
-// Jeremy Williams wrote the code and designed the sound/LED hardware. Please
-// note that it is still very much in the prototype phase, and you will find room for 
-// improvement. For instance, the two code bases are independent and unaware
-// of each other. (Each switch is wired to both boards.) A revision might employ
-// i2c and a master/slave relationship between the boards.
+// Jeremy Williams wrote the code and designed the sound/LED hardware.
+// This is the second revision of the code & hardware. The sound board now
+// acts as a master and the LED board is a slave. All buttons are routed
+// solely to the sound board, and it sends signals to the LED board
+// via hardware serial. There is also a pin expander IC incorporated 
+// instead of the pins on the underside of the Teensy 3.1.
 //
 // As always, thanks to the amazing library developers for keeping Arduino coding
 // from becoming a chore. You are all giants. I'll monitor the feedback on Github
@@ -25,9 +25,15 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
-#include <Bounce.h>
+#include <Bounce2.h>
+#include <Bounce2mcp.h>
 #include <Entropy.h>
 #include <FastLED.h>
+#include "Adafruit_MCP23017.h"
+
+#define HWSERIAL Serial1
+
+Adafruit_MCP23017 mcp;
 
 byte lastButton;
 boolean switchClosed;
@@ -61,51 +67,85 @@ AudioConnection          patchCord12(mixer2, 0, i2s1, 0);
 // Create an object to control the audio shield.
 AudioControlSGTL5000 audioShield;
 
-// Bounce objects to read pushbuttons (20 buttons)
-Bounce button1 = Bounce(0, 35);  // 5 ms debounce time
-Bounce button2 = Bounce(1, 35);
-Bounce button3 = Bounce(2, 35);
-Bounce button4 = Bounce(3, 35);
-Bounce button5 = Bounce(4, 35);
-Bounce button6 = Bounce(8, 35);
-Bounce button7 = Bounce(16, 35);
-Bounce buttonIntercom = Bounce(20, 35);
-Bounce rocker1 = Bounce(21, 35);
-Bounce rocker2 = Bounce(24, 35);
-Bounce rocker3 = Bounce(25, 35);
-Bounce rocker4 = Bounce(26, 35);
-Bounce rocker5 = Bounce(27, 35);
-Bounce rocker6 = Bounce(28, 35);
-Bounce rocker7 = Bounce(29, 35);
-Bounce slot1 = Bounce(30, 35);
-Bounce slot2 = Bounce(31, 35);
-Bounce slot3 = Bounce(32, 35);
-Bounce other1 = Bounce(33, 35);
+// Bounce Teensy Pins
+Bounce button1 = Bounce();
+Bounce button2 = Bounce();
+Bounce button3 = Bounce();
+Bounce button4 = Bounce();
+Bounce button5 = Bounce();
+Bounce button6 = Bounce();
+Bounce button7 = Bounce();
+
+// Debounce MCP23017 Pins
+BounceMcp buttonIntercom = BounceMcp();
+BounceMcp rocker1 = BounceMcp();
+BounceMcp rocker2 = BounceMcp();
+BounceMcp rocker3 = BounceMcp();
+BounceMcp rocker4 = BounceMcp();
+BounceMcp rocker5 = BounceMcp();
+BounceMcp rocker6 = BounceMcp();
+BounceMcp rocker7 = BounceMcp();
+BounceMcp slot1 = BounceMcp();
+BounceMcp slot2 = BounceMcp();
+BounceMcp slot3 = BounceMcp();
+BounceMcp other1 = BounceMcp();
+
 
 void setup() {
+  Serial.begin(57600);
+  HWSERIAL.begin(38400);
+  delay(1000);
+  Serial.println("Hello there!");
+
+  // Start I²C bus as master
+  Wire.begin();
+
+  mcp.begin();      // use default address 0
+
   Entropy.Initialize();
 
   // Configure the pushbutton pins for pullups.
   // Each button should connect from the pin to GND.
-  pinMode(0, INPUT_PULLUP);
-  pinMode(1, INPUT_PULLUP);
+  // Teensy Pins
   pinMode(2, INPUT_PULLUP);
   pinMode(3, INPUT_PULLUP);
   pinMode(4, INPUT_PULLUP);
-  pinMode(8, INPUT_PULLUP);
+  pinMode(5, INPUT_PULLUP);
   pinMode(16, INPUT_PULLUP);
   pinMode(20, INPUT_PULLUP);
   pinMode(21, INPUT_PULLUP);
-  pinMode(24, INPUT_PULLUP);
-  pinMode(25, INPUT_PULLUP);
-  pinMode(26, INPUT_PULLUP);
-  pinMode(27, INPUT_PULLUP);
-  pinMode(28, INPUT_PULLUP);
-  pinMode(29, INPUT_PULLUP);
-  pinMode(30, INPUT_PULLUP);
-  pinMode(31, INPUT_PULLUP);
-  pinMode(32, INPUT_PULLUP);
-  pinMode(33, INPUT_PULLUP);
+  button1.attach(2);
+  button2.attach(3);
+  button3.attach(4);
+  button4.attach(5);
+  button5.attach(16);
+  button6.attach(20);
+  button7.attach(21);
+  button1.interval(35);
+  button2.interval(35);
+  button3.interval(35);
+  button4.interval(35);
+  button5.interval(35);
+  button6.interval(35);
+  button7.interval(35);
+
+  // MCP23017 Pins
+  for (int p=0; p<16; p++)
+  {
+    mcp.pinMode(p, INPUT);
+    mcp.pullUp(p, HIGH);  // turn on a 100K pullup internally
+  }
+  buttonIntercom.attach(mcp, 0, 35);
+  rocker1.attach(mcp, 1, 35);
+  rocker2.attach(mcp, 2, 35);
+  rocker3.attach(mcp, 3, 35);
+  rocker4.attach(mcp, 4, 35);
+  rocker5.attach(mcp, 5, 35);
+  rocker6.attach(mcp, 6, 35);
+  rocker7.attach(mcp, 7, 35);
+  slot1.attach(mcp, 8, 35);
+  slot2.attach(mcp, 9, 35);
+  slot3.attach(mcp, 10, 35);
 
   // Audio connections require memory to work.  For more
   // detailed information, see the MemoryAndCpuUsage example
@@ -193,49 +233,60 @@ void loop() {
   // so combinations of banks can play simultaneously.
 
   // main buttons
-  if (button1.fallingEdge()) {
+  if (button1.fell()) {
+    Serial.println("PRESSED: Button 1");
     if (lastButton == 1 && soundButtons.isPlaying()) {
       soundButtons.stop();
       lastButton = 0;
+      lightShow(0);
     }
     else
     {
       lastButton = 1;
       soundButtons.play("01.wav");
-      Serial.print("Playing 01.wav");
+      Serial.println("Playing 01.wav");
+      lightShow(1);
     }
   }
 
-  if (button2.fallingEdge()) {
+  if (button2.fell()) {
+    Serial.println("PRESSED: Button 2");
     if (lastButton == 2 && soundButtons.isPlaying()) {
       soundButtons.stop();
       lastButton = 0;
+      lightShow(0);
     }
     else
     {
       lastButton = 2;
       soundButtons.play("02.wav");
-      Serial.print("Playing 02.wav");
+      Serial.println("Playing 02.wav");
+      lightShow(2);
     }
   }
 
-  if (button3.fallingEdge()) {
+  if (button3.fell()) {
+    Serial.println("PRESSED: Button 3");
     if (lastButton == 3 && soundButtons.isPlaying()) {
       soundButtons.stop();
       lastButton = 0;
+      lightShow(0);
     }
     else
     {
       lastButton = 3;
       soundButtons.play("03.wav");
-      Serial.print("Playing 03.wav");
+      Serial.println("Playing 03.wav");
+      lightShow(3);
     }
   }
 
-  if (button4.fallingEdge()) {
+  if (button4.fell()) {
+    Serial.println("PRESSED: Button 4");
     if (lastButton == 4 && soundButtons.isPlaying()) {
       soundButtons.stop();
       lastButton = 0;
+      lightShow(0);
     }
     else
     {
@@ -243,12 +294,14 @@ void loop() {
       {
         lastButton = 4;
         soundButtons.play("04.wav");
-        Serial.print("Playing 04.wav");
+        Serial.println("Playing 04.wav");
+        lightShow(4);
       }
     }
   }
 
-  if (button5.fallingEdge()) {
+  if (button5.fell()) {
+    Serial.println("PRESSED: Button 5");
     if (!moviePlaying)
     {
       lastButton = 5;
@@ -262,10 +315,13 @@ void loop() {
       soundButtons.play(fileName);
       Serial.print("Playing ");
       Serial.println(fileName);
+      lightShow(5);
     }
   }
 
-  if (button6.fallingEdge()) {
+  if (button6.fell()) {
+    Serial.println("PRESSED: Button 6");
+    lightShow(6);
     if (lastButton == 6 && soundBackground.isPlaying()) {
       soundBackground.stop();
       lastButton = 0;
@@ -276,12 +332,19 @@ void loop() {
       {
         lastButton = 6;
         soundBackground.play("06.wav");
-        Serial.print("Playing 06.wav");
+        Serial.println("Playing 06.wav");
       }
     }
   }
+  
+  else if (button6.rose())
+  {
+    lightShow(0);
+  }
 
-  if (button7.fallingEdge()) {
+  if (button7.fell()) {
+    Serial.println("PRESSED: Button 7");
+    lightShow(7);
     if (lastButton == 7 && soundBackground.isPlaying()) {
       soundBackground.stop();
       lastButton = 0;
@@ -292,17 +355,25 @@ void loop() {
       {
         lastButton = 7;
         soundBackground.play("07.wav");
-        Serial.print("Playing 07.wav");
+        Serial.println("Playing 07.wav");
       }
     }
   }
+  
+  else if (button7.rose())
+  {
+    lightShow(0);
+  }
 
   // intercom
-  if (buttonIntercom.fallingEdge()) {
+  if (buttonIntercom.fell()) {
+    Serial.println("PRESSED: Intercom");
     soundIntercom.play("08_01.wav");
     Serial.println("Playing 08_01.wav");
+    lightShow(8);
   }
-  if (buttonIntercom.risingEdge()) {
+  if (buttonIntercom.rose()) {
+    lightShow(0);
     byte random_byte = Entropy.random(1,20); // returns a value from 1 to 19
     char fileNumber[3];
     char fileName[13];
@@ -317,65 +388,92 @@ void loop() {
   }
 
   // rocker switches
-  if (rocker1.fallingEdge()) {
+  if (rocker1.fell()) {
+    Serial.println("PRESSED: Rocker 1");
+    lightShow(111);
     soundRocker.play("09_01.wav");
     Serial.println("Playing 09_01.wav");
   }
-  if (rocker1.risingEdge()) {
+  if (rocker1.rose()) {
+    lightShow(110);
     soundRocker.play("09_02.wav");
     Serial.println("Playing 09_02.wav");
   }
-  if (rocker2.fallingEdge()) {
+  if (rocker2.fell()) {
+    Serial.println("PRESSED: Rocker 2");
+    lightShow(121);
     soundRocker.play("10_01.wav");
     Serial.println("Playing 10_01.wav");
   }
-  if (rocker2.risingEdge()) {
+  if (rocker2.rose()) {
+    lightShow(120);
     soundRocker.play("10_02.wav");
     Serial.println("Playing 10_02.wav");
   }
-  if (rocker3.fallingEdge()) {
+  if (rocker3.fell()) {
+    Serial.println("PRESSED: Rocker 3");
+    lightShow(131);
     soundRocker.play("11_01.wav");
     Serial.println("Playing 11_01.wav");
   }
-  if (rocker3.risingEdge()) {
+  if (rocker3.rose()) {
+    lightShow(130);
     soundRocker.play("11_02.wav");
     Serial.println("Playing 11_02.wav");
   }
-  if (rocker4.fallingEdge()) {
+  if (rocker4.fell()) {
+    Serial.println("PRESSED: Rocker 4");
+    lightShow(141);
     soundRocker.play("12_01.wav");
     Serial.println("Playing 12_01.wav");
   }
-  if (rocker4.risingEdge()) {
+  if (rocker4.rose()) {
+    lightShow(140);
     soundRocker.play("12_02.wav");
     Serial.println("Playing 12_02.wav");
   }
-  if (rocker5.fallingEdge()) {
+  if (rocker5.fell()) {
+    Serial.println("PRESSED: Rocker 5");
+    lightShow(151);
     soundRocker.play("13_01.wav");
     Serial.println("Playing 13_01.wav");
   }
-  if (rocker5.risingEdge()) {
+  if (rocker5.rose()) {
+    lightShow(150);
     soundRocker.play("13_02.wav");
     Serial.println("Playing 13_02.wav");
   }
-  if (rocker6.fallingEdge()) {
+  if (rocker6.fell()) {
+    Serial.println("PRESSED: Rocker 6");
+    lightShow(161);
     soundRocker.play("14_01.wav");
     Serial.println("Playing 14_01.wav");
   }
-  if (rocker6.risingEdge()) {
+  if (rocker6.rose()) {
+    lightShow(160);
     soundRocker.play("14_02.wav");
     Serial.println("Playing 14_02.wav");
   }
-  if (rocker7.fallingEdge()) {
+  if (rocker7.fell()) {
+    Serial.println("PRESSED: Rocker 7");
+    lightShow(171);
     soundBackground.play("15.wav");
     Serial.println("Playing 15.wav");
   }
-  if (rocker7.risingEdge()) {
+  if (rocker7.rose()) {
+    lightShow(170);
     soundBackground.stop();
     Serial.println("Stopping soundBackground");
   }
 
   // card slot
-  if (slot1.fallingEdge() || slot2.fallingEdge() || slot3.fallingEdge()) 
+
+  if (slot1.fell()) Serial.println("PRESSED: Slot 1");
+  if (slot2.fell()) Serial.println("PRESSED: Slot 2");
+  if (slot3.fell()) Serial.println("PRESSED: Slot 3");
+
+
+  if (slot1.fell() || slot2.fell() || slot3.fell()) 
   {
     Serial.println("Card inserted...");
     soundButtons.stop();
@@ -474,7 +572,7 @@ void loop() {
   }
 
   // card removed
-  else if (slot1.risingEdge() || slot2.risingEdge() || slot3.risingEdge()) 
+  else if (slot1.rose() || slot2.rose() || slot3.rose()) 
   {
     Serial.println("Card removed...");
     if (moviePlaying) moviePlaying = false;
@@ -502,6 +600,14 @@ boolean allRockersOn()
   }
   else return false;
 }
+
+void lightShow(int seq)
+{
+  Serial.print("Sending: ");
+  Serial.println(seq);
+  HWSERIAL.println(seq, DEC);
+}
+
 
 // Additionl notes on FastLED compact palettes:
 //
