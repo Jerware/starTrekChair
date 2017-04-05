@@ -1,4 +1,4 @@
-// starTrekChairLED release 20150525
+// starTrekChairLED release 20160319
 //
 // This code controls the LEDs on Adam Savage's Star Trek captain's chair
 // featured in the following Tested video:
@@ -10,19 +10,21 @@
 //
 // https://github.com/Jerware/
 //
-// Jeremy Williams wrote the code and designed the sound/LED hardware. Please
-// note that it is still very much in the prototype phase, and you will find room for 
-// improvement. For instance, the two code bases are independent and unaware
-// of each other. (Each switch is wired to both boards.) A revision might employ
-// i2c and a master/slave relationship between the boards.
+// Jeremy Williams wrote the code and designed the sound/LED hardware.
+// This is the second revision of the code & hardware. The sound board now
+// acts as a master and the LED board is a slave. All buttons are routed
+// solely to the sound board, and it sends signals to the LED board
+// via hardware serial. There is also a pin expander IC incorporated 
+// instead of the pins on the underside of the Teensy 3.1.
 //
 // As always, thanks to the amazing library developers for keeping Arduino coding
 // from becoming a chore. You are all giants. I'll monitor the feedback on Github
 // from time to time but this code should be considered unsupported. #LLAP.
 
-#include <Bounce.h>
-#include <FastLED.h>
+#include "FastLED.h"
 #include <IRremote.h>
+
+#define HWSERIAL Serial1
 
 IRsend irsend;
 
@@ -30,14 +32,16 @@ byte lastButton;
 boolean switchClosed;
 int slotMode;
 boolean moviePlaying;
+byte lightShow; // received i2c command
 
 // LED SETUP
 #define LED_PIN     17
 #define NUM_LEDS    318
 #define BRIGHTNESS  255
-#define LED_TYPE    WS2811
+#define LED_TYPE    NEOPIXEL
 #define COLOR_ORDER GRB
 int UPDATES_PER_SECOND = 100;
+long showRate = 100;
 CRGB leds[NUM_LEDS];
 CRGBPalette16 currentPalette;
 TBlendType    currentBlending;
@@ -54,121 +58,64 @@ long lightPanelTick;
 long lightPanelTickDuration = 500; // time between ticks in ms
 byte lightPanelLife = 10; // 0-255 likelihood of panel blinks
 
-// Bounce objects to read pushbuttons (20 buttons)
-Bounce button1 = Bounce(0, 35);  // 5 ms debounce time
-Bounce button2 = Bounce(1, 35);
-Bounce button3 = Bounce(2, 35);
-Bounce button4 = Bounce(3, 35);
-Bounce button5 = Bounce(4, 35);
-Bounce button6 = Bounce(8, 35);
-Bounce button7 = Bounce(16, 35);
-Bounce buttonIntercom = Bounce(20, 35);
-Bounce rocker1 = Bounce(21, 35);
-Bounce rocker2 = Bounce(24, 35);
-Bounce rocker3 = Bounce(25, 35);
-Bounce rocker4 = Bounce(26, 35);
-Bounce rocker5 = Bounce(27, 35);
-Bounce rocker6 = Bounce(28, 35);
-Bounce rocker7 = Bounce(29, 35);
-Bounce slot1 = Bounce(30, 35);
-Bounce slot2 = Bounce(31, 35);
-Bounce slot3 = Bounce(32, 35);
-Bounce other1 = Bounce(33, 35);
-
 void setup() {
   Serial.begin(57600);
-  delay( 1000 ); // power-up safety delay
+  HWSERIAL.begin(38400);
+  delay(1000);
   Serial.println("Hello there!");
   
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+  FastLED.addLeds<LED_TYPE, LED_PIN>(leds, NUM_LEDS);
   FastLED.setBrightness(  BRIGHTNESS );
   currentPalette = RainbowColors_p;
-  currentBlending = BLEND;
+  currentBlending = LINEARBLEND;
   
   resetJewels();
   leds[10] = CRGB::White;
   leds[11] = CRGB::White;
-  
-  // Configure the pushbutton pins for pullups.
-  // Each button should connect from the pin to GND.
-  pinMode(0, INPUT_PULLUP);
-  pinMode(1, INPUT_PULLUP);
-  pinMode(2, INPUT_PULLUP);
-  pinMode(3, INPUT_PULLUP);
-  pinMode(4, INPUT_PULLUP);
-  pinMode(8, INPUT_PULLUP);
-  pinMode(16, INPUT_PULLUP);
-  pinMode(20, INPUT_PULLUP);
-  pinMode(21, INPUT_PULLUP);
-  pinMode(24, INPUT_PULLUP);
-  pinMode(25, INPUT_PULLUP);
-  pinMode(26, INPUT_PULLUP);
-  pinMode(27, INPUT_PULLUP);
-  pinMode(28, INPUT_PULLUP);
-  pinMode(29, INPUT_PULLUP);
-  pinMode(30, INPUT_PULLUP);
-  pinMode(31, INPUT_PULLUP);
-  pinMode(32, INPUT_PULLUP);
-  pinMode(33, INPUT_PULLUP);
+  Serial.println("All systems online, Captain!");
+}
 
-  // Store the button states
-  button1.update();
-  button2.update();
-  button3.update();
-  button4.update();
-  button5.update();
-  button6.update();
-  button7.update();
-  buttonIntercom.update();
-  rocker1.update();
-  rocker2.update();
-  rocker3.update();
-  rocker4.update();
-  rocker5.update();
-  rocker6.update();
-  rocker7.update();
-  slot1.update();
-  slot2.update();
-  slot3.update();
-  other1.update();
+void checkHWSerial()
+{
+  int incomingByte;
+  if (HWSERIAL.available() > 0) {
+    incomingByte = HWSERIAL.parseInt();
+    Serial.print("Message from Starfleet: ");
+    Serial.println(incomingByte);
+    lightShow = incomingByte;
+    HWSERIAL.clear();
+  }
 }
 
 void loop() {
-  // Update all the button objects
-  button1.update();
-  button2.update();
-  button3.update();
-  button4.update();
-  button5.update();
-  button6.update();
-  button7.update();
-  buttonIntercom.update();
-  rocker1.update();
-  rocker2.update();
-  rocker3.update();
-  rocker4.update();
-  rocker5.update();
-  rocker6.update();
-  rocker7.update();
-  slot1.update();
-  slot2.update();
-  slot3.update();
-  other1.update();
-
+  checkHWSerial();
+  if (lightShow == 0)
+  {
+    lightShow = 255;
+    resetJewels();
+  }
   // main buttons
-  if (button1.fallingEdge()){
+  else if (lightShow == 1) {
+    Serial.println("Lightshow 1");
+    lightShow = 255;
     ledColor = 0;
     buttonPressed(1, 57000, 90);  // button, duration in ms, updates per second
   }
-  if (button2.fallingEdge()) {
+  else if (lightShow == 2) {
+    Serial.println("Lightshow 2");
+    lightShow = 255;
     ledColor = 0;
     buttonPressed(2, 33000, 90);
   }
-  if (button3.fallingEdge()) {
+  else if (lightShow == 3) {
+    Serial.println("Lightshow 3");
+    lightShow = 255;
     ledColor = 0;
     buttonPressed(3, 64000, 15);
   }
-  if (button4.fallingEdge()) {
+  else if (lightShow == 4) {
+    Serial.println("Lightshow 4");
+    lightShow = 255;
     if (moviePlaying)
     {
       irsend.sendSony(0xA70, 12); // OK/Pause
@@ -176,7 +123,9 @@ void loop() {
     ledColor = 0;
     buttonPressed(4, 11000, 12);
   }
-  if (button5.fallingEdge()) {
+  else if (lightShow == 5) {
+    Serial.println("Lightshow 5");
+    lightShow = 255;
     if (moviePlaying)
     {
       irsend.sendSony(0x338, 12); // left
@@ -185,7 +134,9 @@ void loop() {
     ledColor = 255;
     buttonPressed(5, 10000, 100);
   }
-  if (button6.fallingEdge()) {
+  else if (lightShow == 6) {
+    Serial.println("Lightshow 5");
+    lightShow = 255;
     if (moviePlaying)
     {
       irsend.sendSony(0x1D0, 12); // TV-RETURN/Kill omxplayer
@@ -193,11 +144,12 @@ void loop() {
     leds[8] = CRGB::Red;
     leds[9] = CRGB::Red;
   }
-  if (button6.risingEdge()) {
-    leds[8] = CRGB::White;
-    leds[9] = CRGB::White;
-  }
-  if (button7.fallingEdge()) {
+//  if (button6.risingEdge()) {
+//    leds[8] = CRGB::White;
+//    leds[9] = CRGB::White;
+//  }
+  else if (lightShow == 7) {
+    lightShow = 255;
     if (moviePlaying)
     {
       irsend.sendSony(0x738, 12); // right
@@ -205,186 +157,187 @@ void loop() {
     leds[4] = CRGB::Black;
     leds[5] = CRGB::Black;
   }
-  if (button7.risingEdge()) {
-    leds[4] = CRGB::White;
-    leds[5] = CRGB::White;
-  }
+//  if (button7.risingEdge()) {
+//    leds[4] = CRGB::White;
+//    leds[5] = CRGB::White;
+//  }
   
   // intercom
-  if (buttonIntercom.fallingEdge()) {
+  else if (lightShow == 8) {
+    lightShow = 255;
     leds[10] = CRGB::Yellow;
     leds[11] = CRGB::Yellow;
   }
-  if (buttonIntercom.risingEdge()) {
-    leds[10] = CRGB::White;
-    leds[11] = CRGB::White;
-  }
+//  if (buttonIntercom.risingEdge()) {
+//    leds[10] = CRGB::White;
+//    leds[11] = CRGB::White;
+//  }
 
-  // rocker switches
-  if (rocker1.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker1.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker2.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker2.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker3.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker3.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker4.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker4.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker5.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker5.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker6.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker6.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-  if (rocker7.fallingEdge()) {
-    lightPanelLife+=5;
-    lightPanelTickDuration-=20;
-  }
-  if (rocker7.risingEdge()) {
-    lightPanelLife-=5;
-    lightPanelTickDuration+=20;
-  }
-
-  // card slot
-  if (slot1.fallingEdge() || slot2.fallingEdge() || slot3.fallingEdge()) {
-    delay(250);
-    slot1.update();
-    slot2.update();
-    slot3.update();
-    if (!slot1.read() && slot2.read() && slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0x010, 12); // 1
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 100");
-      slotMode = 100;
-    }
-    else if (slot1.read() && !slot2.read() && slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0x810, 12); // 2
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 010");
-      slotMode = 10;
-    }
-    else if (slot1.read() && slot2.read() && !slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0x410, 12); // 3
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 001");
-      slotMode = 1;
-    }
-    else if (!slot1.read() && !slot2.read() && slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0xC10, 12); // 4
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 110");
-      slotMode = 110;
-    }
-    else if (!slot1.read() && slot2.read() && !slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0x210, 12); // 5
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 101");
-      slotMode = 101;
-    }
-    else if (slot1.read() && !slot2.read() && !slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0xA10, 12); // 6
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 011");
-      slotMode = 11;
-    }
-    else if (!slot1.read() && !slot2.read() && !slot3.read())
-    {
-      if (allRockersOn() == true)
-      {
-        moviePlaying = true;
-        irsend.sendSony(0x610, 12); // 7
-      }
-      lastButton = 0;
-      resetJewels();
-      Serial.println("Slot mode 111");
-      slotMode = 111;
-    }
-  }
-
-  // card removed
-  else if (slot1.risingEdge() || slot2.risingEdge() || slot3.risingEdge()) 
-  {
-    Serial.println("Card removed...");
-    if (moviePlaying)
-    {
-      irsend.sendSony(0x070, 12); // Menu/Quit
-      moviePlaying = false;
-    }
-    slotMode = 0;
-    delay(250);
-    slot1.update();
-    slot2.update();
-    slot3.update();
-  }
+//  // rocker switches
+//  if (rocker1.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker1.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker2.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker2.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker3.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker3.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker4.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker4.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker5.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker5.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker6.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker6.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//  if (rocker7.fallingEdge()) {
+//    lightPanelLife+=5;
+//    lightPanelTickDuration-=20;
+//  }
+//  if (rocker7.risingEdge()) {
+//    lightPanelLife-=5;
+//    lightPanelTickDuration+=20;
+//  }
+//
+//  // card slot
+//  if (slot1.fallingEdge() || slot2.fallingEdge() || slot3.fallingEdge()) {
+//    delay(250);
+//    slot1.update();
+//    slot2.update();
+//    slot3.update();
+//    if (!slot1.read() && slot2.read() && slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0x010, 12); // 1
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 100");
+//      slotMode = 100;
+//    }
+//    else if (slot1.read() && !slot2.read() && slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0x810, 12); // 2
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 010");
+//      slotMode = 10;
+//    }
+//    else if (slot1.read() && slot2.read() && !slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0x410, 12); // 3
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 001");
+//      slotMode = 1;
+//    }
+//    else if (!slot1.read() && !slot2.read() && slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0xC10, 12); // 4
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 110");
+//      slotMode = 110;
+//    }
+//    else if (!slot1.read() && slot2.read() && !slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0x210, 12); // 5
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 101");
+//      slotMode = 101;
+//    }
+//    else if (slot1.read() && !slot2.read() && !slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0xA10, 12); // 6
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 011");
+//      slotMode = 11;
+//    }
+//    else if (!slot1.read() && !slot2.read() && !slot3.read())
+//    {
+//      if (allRockersOn() == true)
+//      {
+//        moviePlaying = true;
+//        irsend.sendSony(0x610, 12); // 7
+//      }
+//      lastButton = 0;
+//      resetJewels();
+//      Serial.println("Slot mode 111");
+//      slotMode = 111;
+//    }
+//  }
+//
+//  // card removed
+//  else if (slot1.risingEdge() || slot2.risingEdge() || slot3.risingEdge()) 
+//  {
+//    Serial.println("Card removed...");
+//    if (moviePlaying)
+//    {
+//      irsend.sendSony(0x070, 12); // Menu/Quit
+//      moviePlaying = false;
+//    }
+//    slotMode = 0;
+//    delay(250);
+//    slot1.update();
+//    slot2.update();
+//    slot3.update();
+//  }
 
   // LED FX
   // alarm 1
@@ -401,7 +354,7 @@ void loop() {
     }
       
     currentPalette = alarm1_p; 
-    currentBlending = BLEND;
+    currentBlending = LINEARBLEND;
      
     static uint8_t startIndex = 0;
     startIndex = startIndex + 1; /* motion speed */
@@ -423,7 +376,7 @@ void loop() {
     }
       
     currentPalette = alarm2_p; 
-    currentBlending = BLEND;
+    currentBlending = LINEARBLEND;
      
     static uint8_t startIndex = 0;
     startIndex = startIndex + 1; /* motion speed */
@@ -444,7 +397,7 @@ void loop() {
     }
 
     SetupSpaceyPalette();             
-    currentBlending = BLEND;
+    currentBlending = LINEARBLEND;
     static uint8_t startIndex = 0;
     startIndex = startIndex + 1; /* motion speed */
     FillLEDsFromPaletteColors( startIndex);
@@ -538,14 +491,14 @@ void loop() {
   FastLED.show();
 }
 
-boolean allRockersOn()
-{
-  if (!rocker1.read() && !rocker2.read() && !rocker3.read() && !rocker4.read() && !rocker5.read() && !rocker6.read() && !rocker7.read())
-  {
-    return true;
-  }
-  else return false;
-}
+//boolean allRockersOn()
+//{
+//  if (!rocker1.read() && !rocker2.read() && !rocker3.read() && !rocker4.read() && !rocker5.read() && !rocker6.read() && !rocker7.read())
+//  {
+//    return true;
+//  }
+//  else return false;
+//}
 
 void randomlyBlink(int led1, int led2)
 {
@@ -572,12 +525,16 @@ void buttonPressed(uint8_t buttonNumber, uint32_t duration, uint16_t ups)
 
 void resetJewels()
 {
-  for( int i = 0; i < 10; i++) {
+  for( int i = 0; i < 12; i++) {
     leds[i] = CRGB::White;
   }
   for( int i = 30; i < NUM_LEDS; i++) {
     leds[i] = CRGB::Black;
   }
+  effectStopTime = 0;
+  FastLED.show();
+  Serial.print("Jewels reset: ");
+  Serial.println(lightShow);
 }
 
 // LED FX CODE
@@ -591,26 +548,6 @@ void FillLEDsFromPaletteColors( uint8_t colorIndex)
   }
 }
 
-void ChangePalettePeriodically()
-{
-  uint8_t secondHand = (millis() / 1000) % 60;
-  static uint8_t lastSecond = 99;
-  
-  if( lastSecond != secondHand) {
-    lastSecond = secondHand;
-    if( secondHand ==  0)  { currentPalette = RainbowColors_p;         currentBlending = BLEND; }
-    if( secondHand == 10)  { currentPalette = RainbowStripeColors_p;   currentBlending = NOBLEND;  }
-    if( secondHand == 15)  { currentPalette = RainbowStripeColors_p;   currentBlending = BLEND; }
-    if( secondHand == 20)  { SetupPurpleAndGreenPalette();             currentBlending = BLEND; }
-    if( secondHand == 25)  { SetupTotallyRandomPalette();              currentBlending = BLEND; }
-    if( secondHand == 30)  { SetupBlackAndWhiteStripedPalette();       currentBlending = NOBLEND; }
-    if( secondHand == 35)  { SetupBlackAndWhiteStripedPalette();       currentBlending = BLEND; }
-    if( secondHand == 40)  { currentPalette = CloudColors_p;           currentBlending = BLEND; }
-    if( secondHand == 45)  { currentPalette = PartyColors_p;           currentBlending = BLEND; }
-    if( secondHand == 50)  { currentPalette = myRedWhiteBluePalette_p; currentBlending = NOBLEND;  }
-    if( secondHand == 55)  { currentPalette = myRedWhiteBluePalette_p; currentBlending = BLEND; }
-  }
-}
 
 // This function fills the palette with totally random colors.
 void SetupTotallyRandomPalette()
