@@ -19,7 +19,7 @@ serial. There is also a pin expander IC incorporated instead of the pins
 on the underside of the Teensy 3.1.
 
 A PCB is now available from OSH Park:
-https://oshpark.com/shared_projects/sdLJDqlW
+https://oshpark.com/shared_projects/ZAHpgs72
 
 As always, thanks to the amazing library developers for keeping Arduino coding
 from becoming a chore. You are all giants. I'll monitor the feedback on Github
